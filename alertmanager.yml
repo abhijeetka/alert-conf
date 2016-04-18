@@ -1,13 +1,13 @@
 global:
   # The smarthost and SMTP sender used for mail notifications.
-  # If the host requires authentication, set SMTP_AUTH_USERNAME and SMTP_AUTH_PASSWORD
-  # environment variables.
-  #smtp_smarthost: 'localhost:25'
-  #smtp_from: 'alertmanager@example.org'
+  smtp_smarthost: 'localhost:25'
+  smtp_from: 'alertmanager@example.org'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: 'password'
   # The auth token for Hipchat.
-  #hipchat_auth_token: '1234556789'
+  hipchat_auth_token: '1234556789'
   # Alternative host for Hipchat.
-  #hipchat_url: 'https://hipchat.foobar.org/'
+  hipchat_url: 'https://hipchat.foobar.org/'
 
 # The directory from which notification templates are read.
 templates: 
@@ -18,7 +18,7 @@ route:
   # The labels by which incoming alerts are grouped together. For example,
   # multiple alerts coming in for cluster=A and alertname=LatencyHigh would
   # be batched into a single group.
-  group_by: ['ContainerMemoryUsagePercona', 'ContainerMemoryUsageGluster', 'ContainerMemoryUsageApplication','CPUIncreasePercona','CPUIncreaseGluster','CPUIncreaseApplication','ContainerLastSeenPercona','ContainerLastSeenGluster','ContainerLastSeenApplication','ContainerDegradeApplication','ContainerDegradeAlertPercona','']
+  group_by: ['alertname', 'cluster', 'service']
 
   # When a new group of alerts is created by an incoming alert, wait at
   # least 'group_wait' to send the initial notification.
@@ -33,10 +33,10 @@ route:
 
   # If an alert has successfully been sent, wait 'repeat_interval' to
   # resend them.
-  repeat_interval: 6m 
+  repeat_interval: 3h 
 
   # A default receiver
-  receiver: ALMAlert
+  receiver: alm-alerts
 
   # All the above attributes are inherited by all child routes and can 
   # overwritten on each.
@@ -45,18 +45,101 @@ route:
   routes:
   # This routes performs a regular expression match on alert labels to
   # catch alerts that are related to a list of services.
-  #- match_re:
-   #   service: ^(foo1|foo2|baz)$
-    #  receiver: team-X-mails
+  - match_re:
+      service: ^(foo1|foo2|baz)$
+    receiver: alm-alerts
     # The service has a sub-route for critical alerts, any alerts
     # that do not match, i.e. severity != critical, fall-back to the
     # parent node and are sent to 'team-X-mails'
     routes:
     - match:
+        severity: critical
+      receiver: alm-alerts
+    - match:
         severity: ContainerMemoryUsagePercona
-      receiver: ALMAlert
-  
+      receiver: alm-percona-memory
+    - match:
+        severity: ContainerMemoryUsageGluster
+      receiver: alm-gluster-memory
+    - match:
+        severity: ContainerMemoryUsageApplication
+      receiver: alm-app-memory
+    - match:
+        severity: CPUIncreasePercona
+      receiver: alm-percona-cpu
+    - match:
+        severity: CPUIncreaseGluster
+      receiver: alm-gluster-cpu
+    - match:
+        severity: CPUIncreaseApplication
+      receiver: alm-app-cpu
+    - match:
+        severity: ContainerLastSeenPercona
+      receiver: alm-percona-lastseen
+    - match:
+        severity: ContainerLastSeenGluster
+      receiver: alm-gluster-lastseen
+    - match:
+        severity: ContainerLastSeenApplication
+      receiver: alm-app-lastseen
+    - match:
+        severity: ContainerDegradeApplication
+      receiver: alm-app-degrade
+    - match:
+        severity: ContainerDegradeAlertPercona
+      receiver: alm-percona-degrade
+
+  # This route handles all alerts coming from a database service. If there's
+  # no team to handle it, it defaults to the DB team.
+
+# Inhibition rules allow to mute a set of alerts given that another alert is
+# firing.
+# We use this to mute any warning-level notifications if the same alert is 
+# already critical.
+inhibit_rules:
+- source_match:
+    severity: 'critical'
+  target_match:
+    severity: 'warning'
+  # Apply inhibition if the alertname is the same.
+  equal: ['alertname', 'cluster', 'service']
+
+
 receivers:
-- name: 'ALMAlert'
+- name: 'alm-alerts'
+  email_configs:
+  - to: 'team-X+alerts@example.org'
+- name: 'alm-percona-memory'
   webhook_configs:
   - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerDegradeAlertPercona'
+- name: 'alm-gluster-memory'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerMemoryUsageGluster'
+- name: 'alm-app-memory'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerMemoryUsageApplication'
+- name: 'alm-percona-cpu'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=CPUIncreasePercona'
+- name: 'alm-gluster-cpu'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=CPUIncreaseGluster'
+- name: 'alm-app-cpu'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=CPUIncreaseApplication'
+- name: 'alm-percona-lastseen'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerLastSeenPercona'
+- name: 'alm-gluster-lastseen'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerLastSeenGluster'
+- name: 'alm-app-lastseen'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerLastSeenApplication'
+- name: 'alm-app-degrade'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerDegradeApplication'
+- name: 'alm-percona-degrade'
+  webhook_configs:
+  - url: 'http://172.27.56.81:8081/buildByToken/buildWithParameters?job=PrometheusAlertManager&token=b07c9a0b3c4e11f54c7d533adf7dace5&reason=ContainerDegradeAlertPercona'
+  
